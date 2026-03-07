@@ -142,6 +142,130 @@ function json(data: unknown, status = 200, headers: Record<string, string> = {})
   });
 }
 
+function html(document: string, status = 200, headers: Record<string, string> = {}) {
+  return new Response(document, {
+    status,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "public, max-age=3600",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "SAMEORIGIN",
+      "referrer-policy": "strict-origin-when-cross-origin",
+      ...headers
+    }
+  });
+}
+
+function renderPrivacyPolicyPage() {
+  const updatedAt = "7 de marco de 2026";
+  return `<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Destroyer2D | Politica de Privacidade</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #06111d;
+        --panel: rgba(10, 27, 46, 0.88);
+        --border: rgba(74, 193, 255, 0.22);
+        --text: #eef6ff;
+        --muted: #9cb6cf;
+        --accent: #4cc9ff;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at top, rgba(45, 140, 255, 0.2), transparent 34%),
+          linear-gradient(180deg, #081525 0%, var(--bg) 100%);
+        color: var(--text);
+      }
+      main {
+        width: min(920px, calc(100vw - 32px));
+        margin: 40px auto;
+        padding: 28px;
+        border: 1px solid var(--border);
+        border-radius: 24px;
+        background: var(--panel);
+        backdrop-filter: blur(10px);
+        box-shadow: 0 30px 70px rgba(0, 0, 0, 0.32);
+      }
+      h1, h2 { margin: 0 0 14px; }
+      h1 { font-size: clamp(2rem, 5vw, 3rem); }
+      h2 { margin-top: 28px; font-size: 1.15rem; color: var(--accent); }
+      p, li { color: var(--muted); line-height: 1.65; }
+      ul { padding-left: 20px; }
+      .meta {
+        display: inline-block;
+        margin-bottom: 18px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(76, 201, 255, 0.12);
+        color: var(--accent);
+        font-weight: 600;
+      }
+      a { color: #90e0ff; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <span class="meta">Ultima atualizacao: ${updatedAt}</span>
+      <h1>Politica de Privacidade</h1>
+      <p>
+        Esta Politica de Privacidade descreve como o jogo Destroyer2D e sua API de ranking
+        mundial coletam, utilizam e armazenam dados necessarios para funcionamento do login,
+        sincronizacao de records e exibicao do leaderboard.
+      </p>
+
+      <h2>Dados coletados</h2>
+      <ul>
+        <li>Nickname escolhido pelo jogador para exibicao publica no ranking mundial.</li>
+        <li>Email e senha para criacao e acesso da conta.</li>
+        <li>Score, level, dificuldade e data dos records sincronizados.</li>
+        <li>Dados tecnicos minimos de seguranca, como endereco IP e user-agent, para protecao da API.</li>
+      </ul>
+
+      <h2>Como os dados sao usados</h2>
+      <ul>
+        <li>Autenticar o usuario e manter a conta protegida.</li>
+        <li>Sincronizar records pessoais com o ranking mundial.</li>
+        <li>Exibir a posicao do jogador nas tabelas publicas por dificuldade.</li>
+        <li>Prevenir abuso, fraude, spam e acesso indevido aos endpoints.</li>
+      </ul>
+
+      <h2>Compartilhamento</h2>
+      <p>
+        O nickname, score, level e posicao no ranking podem ser exibidos publicamente.
+        Email, senha, tokens e registros internos de seguranca nao sao exibidos publicamente.
+      </p>
+
+      <h2>Armazenamento e seguranca</h2>
+      <p>
+        Senhas sao armazenadas com hash seguro. Tokens de sessao e refresh tokens recebem
+        tratamento seguro no backend. Tambem sao aplicados controles de autenticacao, cache
+        e limitacao de requisoes para reduzir abuso e acesso indevido.
+      </p>
+
+      <h2>Retencao e exclusao</h2>
+      <p>
+        Os dados permanecem armazenados enquanto forem necessarios para operacao do servico
+        de conta e ranking. Caso voce precise solicitar remocao ou esclarecimentos, utilize
+        o canal de suporte informado na pagina oficial do aplicativo.
+      </p>
+
+      <h2>Contato</h2>
+      <p>
+        Para duvidas sobre privacidade, uso de dados ou solicitacoes relacionadas a conta,
+        utilize o contato de suporte informado na Play Console ou na pagina oficial do jogo.
+      </p>
+    </main>
+  </body>
+</html>`;
+}
+
 function normalizeNickname(nickname: string): string {
   return nickname.trim().toLowerCase();
 }
@@ -646,6 +770,9 @@ const server = Bun.serve({
       }
       if (req.method === "GET" && url.pathname === "/healthz") {
         return withCors(req, json({ ok: true, now: Date.now() }));
+      }
+      if (req.method === "GET" && (url.pathname === "/privacy" || url.pathname === "/privacy-policy")) {
+        return withCors(req, html(renderPrivacyPolicyPage()));
       }
 
       return withCors(req, json({ error: "not_found", message: "Route not found." }, 404));

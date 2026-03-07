@@ -42,3 +42,5 @@ Server routes:
 - `GET /v1/profile`
 - `GET /v1/leaderboards/:difficulty?page=1&pageSize=20`
 - `POST /v1/leaderboards/sync`
+- `GET /privacy`
+- `GET /privacy-policy`
