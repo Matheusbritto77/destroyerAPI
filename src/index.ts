@@ -10,10 +10,18 @@ const nicknameSchema = z
   .min(3)
   .max(18)
   .regex(/^[A-Za-z0-9_]+$/);
+const emailSchema = z.string().trim().toLowerCase().email().max(254);
+const passwordSchema = z.string().min(8).max(72);
 
-const googleAuthSchema = z.object({
-  idToken: z.string().min(32),
-  nonce: z.string().min(16).max(255)
+const registerSchema = z.object({
+  nickname: nicknameSchema,
+  email: emailSchema,
+  password: passwordSchema
+});
+
+const loginSchema = z.object({
+  email: emailSchema,
+  password: passwordSchema
 });
 
 const nicknameRequestSchema = z.object({
@@ -43,6 +51,8 @@ type UserRow = {
   nickname: string | null;
   nickname_normalized: string | null;
   email: string | null;
+  email_normalized: string | null;
+  password_hash: string | null;
   full_name: string | null;
   avatar_url: string | null;
   updated_at: number;
@@ -50,7 +60,6 @@ type UserRow = {
 
 type AuthContext = {
   user: UserRow;
-  accessToken: string;
 };
 
 const rateLimitWindowMs = 60_000;
@@ -59,12 +68,13 @@ const leaderboardCache = new Map<string, { expiresAt: number; payload: unknown }
 const rateLimits = new Map<string, { count: number; resetAt: number }>();
 
 const selectUserById = db.query<UserRow, [string]>(
-  `SELECT id, nickname, nickname_normalized, email, full_name, avatar_url, updated_at
+  `SELECT id, nickname, nickname_normalized, email, email_normalized, password_hash, full_name, avatar_url, updated_at
    FROM users WHERE id = ?`
 );
-const selectUserBySubHash = db.query<UserRow, [string]>(
-  `SELECT id, nickname, nickname_normalized, email, full_name, avatar_url, updated_at
-    FROM users WHERE google_sub_hash = ?`);
+const selectUserByEmail = db.query<UserRow, [string]>(
+  `SELECT id, nickname, nickname_normalized, email, email_normalized, password_hash, full_name, avatar_url, updated_at
+   FROM users WHERE email_normalized = ?`
+);
 const selectRefreshToken = db.query<
   { id: string; user_id: string; expires_at: number; revoked_at: number | null },
   [string]
@@ -75,6 +85,9 @@ const selectRefreshToken = db.query<
 );
 const countNickname = db.query<{ count: number }, [string]>(
   `SELECT COUNT(*) as count FROM users WHERE nickname_normalized = ?`
+);
+const countEmail = db.query<{ count: number }, [string]>(
+  `SELECT COUNT(*) as count FROM users WHERE email_normalized = ?`
 );
 const selectWorldRecord = db.query<
   { id: string; score: number; level: number },
@@ -87,13 +100,8 @@ const selectWorldRecord = db.query<
 
 const insertUser = db.prepare(
   `INSERT INTO users (
-      id, google_sub_hash, google_issuer, email, email_verified, full_name, avatar_url, created_at, updated_at
-   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-);
-const updateUserProfile = db.prepare(
-  `UPDATE users
-   SET email = ?, email_verified = ?, full_name = ?, avatar_url = ?, updated_at = ?
-   WHERE id = ?`
+      id, google_sub_hash, google_issuer, email, email_normalized, password_hash, email_verified, full_name, avatar_url, nickname, nickname_normalized, created_at, updated_at
+   ) VALUES (?, ?, ?, ?, ?, ?, 1, NULL, NULL, ?, ?, ?, ?)`
 );
 const insertRefreshToken = db.prepare(
   `INSERT INTO refresh_tokens (
@@ -174,8 +182,9 @@ async function readJson<T>(req: Request, schema: z.ZodSchema<T>): Promise<T> {
 }
 
 function getAllowedOrigin(origin: string | null): string | null {
-  if (!origin) return null;
-  if (config.allowedOrigins.length === 0) return null;
+  if (!origin || config.allowedOrigins.length === 0) {
+    return null;
+  }
   return config.allowedOrigins.includes(origin) ? origin : null;
 }
 
@@ -239,7 +248,11 @@ function invalidateLeaderboardCache(difficulties: string[]) {
   });
 }
 
-function fetchLeaderboardPage(difficulty: z.infer<typeof difficultySchema>, page: number, pageSize: number) {
+function fetchLeaderboardPage(
+  difficulty: z.infer<typeof difficultySchema>,
+  page: number,
+  pageSize: number
+) {
   const totalRow = db
     .query<{ count: number }, [string]>(
       `SELECT COUNT(*) as count
@@ -354,33 +367,58 @@ async function requireAuth(req: Request): Promise<AuthContext> {
     );
   }
 
-  return { user, accessToken: header.slice("Bearer ".length) };
+  return { user };
 }
 
-async function handleGoogleAuth(req: Request, server: Bun.Server<unknown>) {
-  const payload = await readJson(req, googleAuthSchema);
-  const google = await security.verifyGoogleIdToken(payload.idToken, payload.nonce);
-  const googleSub = z.string().parse(google.sub);
-  const issuer = z.string().parse(google.iss);
-  const subHash = security.hashGoogleSub(googleSub);
-  const email = typeof google.email === "string" ? google.email : null;
-  const fullName = typeof google.name === "string" ? google.name : null;
-  const avatarUrl = typeof google.picture === "string" ? google.picture : null;
-  const emailVerified = google.email_verified === true ? 1 : 0;
-  const now = Date.now();
+async function handleRegister(req: Request, server: Bun.Server<unknown>) {
+  const payload = await readJson(req, registerSchema);
+  const nicknameNormalized = normalizeNickname(payload.nickname);
+  const emailNormalized = payload.email.trim().toLowerCase();
 
-  let user: UserRow | null = selectUserBySubHash.get(subHash) ?? null;
-  if (!user) {
-    const id = crypto.randomUUID();
-    insertUser.run(id, subHash, issuer, email, emailVerified, fullName, avatarUrl, now, now);
-    user = selectUserById.get(id) ?? null;
-  } else {
-    updateUserProfile.run(email, emailVerified, fullName, avatarUrl, now, user.id);
-    user = selectUserById.get(user.id) ?? null;
+  if ((countNickname.get(nicknameNormalized)?.count ?? 0) > 0) {
+    return json({ error: "nickname_taken", message: "Nickname already exists." }, 409);
+  }
+  if ((countEmail.get(emailNormalized)?.count ?? 0) > 0) {
+    return json({ error: "email_taken", message: "Email already exists." }, 409);
   }
 
+  const passwordHash = await security.hashPassword(payload.password);
+  const now = Date.now();
+  const id = crypto.randomUUID();
+
+  insertUser.run(
+    id,
+    security.hashLocalIdentity(emailNormalized),
+    "local",
+    payload.email,
+    emailNormalized,
+    passwordHash,
+    payload.nickname.trim(),
+    nicknameNormalized,
+    now,
+    now
+  );
+
+  const user = selectUserById.get(id);
   if (!user) {
-    return json({ error: "auth_failed", message: "Unable to create or load user." }, 500);
+    return json({ error: "register_failed", message: "Unable to create user." }, 500);
+  }
+
+  return json(await issueSession(user, req, server), 201);
+}
+
+async function handleLogin(req: Request, server: Bun.Server<unknown>) {
+  const payload = await readJson(req, loginSchema);
+  const emailNormalized = payload.email.trim().toLowerCase();
+  const user = selectUserByEmail.get(emailNormalized);
+
+  if (!user?.password_hash) {
+    return json({ error: "invalid_credentials", message: "Email or password is invalid." }, 401);
+  }
+
+  const isPasswordValid = await security.verifyPassword(payload.password, user.password_hash);
+  if (!isPasswordValid) {
+    return json({ error: "invalid_credentials", message: "Email or password is invalid." }, 401);
   }
 
   return json(await issueSession(user, req, server));
@@ -393,7 +431,10 @@ async function handleRefresh(req: Request, server: Bun.Server<unknown>) {
   const now = Date.now();
 
   if (!stored || stored.revoked_at || stored.expires_at <= now) {
-    return json({ error: "invalid_refresh_token", message: "Refresh token is invalid or expired." }, 401);
+    return json(
+      { error: "invalid_refresh_token", message: "Refresh token is invalid or expired." },
+      401
+    );
   }
 
   revokeRefreshToken.run(now, stored.id);
@@ -410,7 +451,10 @@ async function handleNickname(req: Request) {
   const body = await readJson(req, nicknameRequestSchema);
   const normalized = normalizeNickname(body.nickname);
 
-  if (auth.user.nickname_normalized !== normalized && (countNickname.get(normalized)?.count ?? 0) > 0) {
+  if (
+    auth.user.nickname_normalized !== normalized &&
+    (countNickname.get(normalized)?.count ?? 0) > 0
+  ) {
     return json({ error: "nickname_taken", message: "Nickname already exists." }, 409);
   }
 
@@ -422,12 +466,12 @@ async function handleNickname(req: Request) {
   }
 
   return json({
-    ...createSessionPayload(updated),
     accessToken: await security.issueAccessToken({
       sub: updated.id,
       nicknameSet: true
     }),
-    expiresInSeconds: config.accessTokenTtlSeconds
+    expiresInSeconds: config.accessTokenTtlSeconds,
+    ...createSessionPayload(updated)
   });
 }
 
@@ -540,7 +584,7 @@ async function handleSync(req: Request) {
   return json({
     synced: touchedDifficulties,
     summary,
-    nicknameRequired: !auth.user.nickname
+    nicknameRequired: false
   });
 }
 
@@ -579,8 +623,11 @@ const server = Bun.serve({
     }
 
     try {
-      if (req.method === "POST" && url.pathname === "/v1/auth/google") {
-        return withCors(req, await handleGoogleAuth(req, server));
+      if (req.method === "POST" && url.pathname === "/v1/auth/register") {
+        return withCors(req, await handleRegister(req, server));
+      }
+      if (req.method === "POST" && url.pathname === "/v1/auth/login") {
+        return withCors(req, await handleLogin(req, server));
       }
       if (req.method === "POST" && url.pathname === "/v1/auth/refresh") {
         return withCors(req, await handleRefresh(req, server));

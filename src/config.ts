@@ -11,7 +11,6 @@ const normalizePem = (value: string): string => value.replace(/\\n/g, "\n");
 export const config = {
   port: Number(Bun.env.PORT ?? 3000),
   databasePath: Bun.env.DATABASE_PATH ?? "./data/world-records.sqlite",
-  googleClientId: required("GOOGLE_CLIENT_ID"),
   tokenPepper: required("TOKEN_PEPPER"),
   jwtPrivateKeyPem: normalizePem(required("JWT_PRIVATE_KEY_PEM")),
   jwtPublicKeyPem: normalizePem(required("JWT_PUBLIC_KEY_PEM")),

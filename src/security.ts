@@ -1,15 +1,12 @@
 import { createHmac, randomBytes } from "node:crypto";
 import {
   SignJWT,
-  createRemoteJWKSet,
   importPKCS8,
   importSPKI,
   jwtVerify,
   type JWTPayload
 } from "jose";
 import { config } from "./config";
-
-const googleJwks = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
 
 const privateKey = await importPKCS8(config.jwtPrivateKeyPem, "EdDSA");
 const publicKey = await importSPKI(config.jwtPublicKeyPem, "EdDSA");
@@ -19,23 +16,21 @@ const hmac = (value: string): string =>
 
 export const security = {
   hashOpaqueToken: hmac,
-  hashGoogleSub(sub: string) {
-    return hmac(`google-sub:${sub}`);
+  hashLocalIdentity(value: string) {
+    return hmac(`local-auth:${value}`);
   },
   issueOpaqueRefreshToken() {
     return randomBytes(48).toString("base64url");
   },
-  async verifyGoogleIdToken(idToken: string, nonce: string) {
-    const result = await jwtVerify(idToken, googleJwks, {
-      issuer: ["https://accounts.google.com", "accounts.google.com"],
-      audience: config.googleClientId
+  async hashPassword(password: string) {
+    return Bun.password.hash(password, {
+      algorithm: "argon2id",
+      memoryCost: 19456,
+      timeCost: 2
     });
-
-    if (nonce && result.payload.nonce !== nonce) {
-      throw new Error("Invalid OAuth nonce.");
-    }
-
-    return result.payload;
+  },
+  async verifyPassword(password: string, hash: string) {
+    return Bun.password.verify(password, hash);
   },
   async issueAccessToken(payload: { sub: string; nicknameSet: boolean }) {
     return new SignJWT({

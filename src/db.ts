@@ -14,10 +14,12 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
-    google_sub_hash TEXT NOT NULL UNIQUE,
-    google_issuer TEXT NOT NULL,
+    google_sub_hash TEXT,
+    google_issuer TEXT,
     email TEXT,
-    email_verified INTEGER NOT NULL DEFAULT 0,
+    email_normalized TEXT,
+    password_hash TEXT,
+    email_verified INTEGER NOT NULL DEFAULT 1,
     full_name TEXT,
     avatar_url TEXT,
     nickname TEXT,
@@ -56,4 +58,26 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user
     ON refresh_tokens(user_id, expires_at);
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub_hash
+    ON users(google_sub_hash)
+    WHERE google_sub_hash IS NOT NULL;
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_normalized
+    ON users(email_normalized)
+    WHERE email_normalized IS NOT NULL;
 `);
+
+const existingColumns = db
+  .query<{ name: string }, []>(`PRAGMA table_info(users)`)
+  .all()
+  .map((column) => column.name);
+
+const ensureColumn = (name: string, sql: string) => {
+  if (!existingColumns.includes(name)) {
+    db.exec(`ALTER TABLE users ADD COLUMN ${sql};`);
+  }
+};
+
+ensureColumn("email_normalized", "email_normalized TEXT");
+ensureColumn("password_hash", "password_hash TEXT");

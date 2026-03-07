@@ -4,9 +4,10 @@ Secure Bun API for the `WORLD` leaderboard tab.
 
 ## Features
 
-- Google OAuth2 sign-in using ID token verification against Google's JWKS
+- Local account registration with unique nickname, email and password
 - Bearer access tokens signed with `Ed25519` via `jose`
 - Opaque refresh tokens stored hashed with HMAC-SHA256
+- Password hashing with `Argon2id`
 - SQLite persistence for users, refresh tokens and best record per difficulty
 - Nickname uniqueness enforced server-side
 - Rate limiting, public leaderboard caching and paginated leaderboard responses
@@ -15,8 +16,7 @@ Secure Bun API for the `WORLD` leaderboard tab.
 
 Copy `.env.example` and fill the values:
 
-- `GOOGLE_CLIENT_ID`: Google server client id used by the Android app
-- `TOKEN_PEPPER`: random secret used to hash Google subjects and refresh tokens
+- `TOKEN_PEPPER`: random secret used to hash local identifiers and refresh tokens
 - `JWT_PRIVATE_KEY_PEM` / `JWT_PUBLIC_KEY_PEM`: Ed25519 PEM keys
 
 Example Ed25519 key generation:
@@ -35,7 +35,8 @@ bun run dev
 
 Server routes:
 
-- `POST /v1/auth/google`
+- `POST /v1/auth/register`
+- `POST /v1/auth/login`
 - `POST /v1/auth/refresh`
 - `POST /v1/profile/nickname`
 - `GET /v1/profile`
